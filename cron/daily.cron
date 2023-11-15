@@ -1,0 +1,2 @@
+MAILTO=oliver@schonrocks.com
+03 12 * * *  /home/oliver/c/queue/rwth.py && file="$(/home/oliver/c/queue/rwth.py --graph)" && date | mail --subject 'RWTH Accom Update' --attach "$file" oliver@schonrocks.com tobias@schonrocks.com && rm "$file"
