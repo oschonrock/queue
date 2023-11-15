@@ -8,8 +8,6 @@ from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 import datetime as dt
 import argparse
-import matplotlib.pyplot as plt
-import matplotlib
 import numpy as np
 import os
 import sys
@@ -17,7 +15,6 @@ from collections import namedtuple
 from dataclasses import dataclass
 from dotenv import dotenv_values
 import bisect
-import pandas
 import re
 
 dirname = os.path.realpath(os.path.dirname(__file__))
@@ -44,6 +41,8 @@ class User:
     id: int | None
     email: str
     password: str
+    rmc_value: str  # remember_me_cookie
+    rmc_expiry: dt.datetime
     firstname: str
     lastname: str
     goal_date: dt.date
@@ -60,25 +59,51 @@ class Regression:
     dfpos_1w: int
 
 
-def login_and_get_rows(user: User):
+def login_and_get_rows(db, user: User):
     """Login to RWTH site and retrieve room queue table page."""
     with requests.session() as sess:
-        req = sess.get(config['login_url']).text
-        html = BeautifulSoup(req, "html.parser")
+        if user.rmc_value is None or user.rmc_expiry <= dt.datetime.now():
+            # we don't have a "remember me cookie" so must login from scatch
+            req = sess.get(config['login_url']).text
+            html = BeautifulSoup(req, "html.parser")
 
-        token = html.find("input", {"name": "_csrf_token"}).attrs["value"]
+            token = html.find("input", {"name": "_csrf_token"}).attrs["value"]
 
-    payload = {
-        "_csrf_token": token,
-        "_username": user.email,
-        "_password": user.password,
-    }
-    action_url = urljoin(config['login_url'],
-                         html.find("form").attrs["action"])
-    sess.post(action_url, data=payload)
-    r = sess.get(config['dashboard_url'])
-    soup = BeautifulSoup(r.content, "html.parser")
-    return soup.find("div", id="rooms").find("table").find('tbody').find_all('tr')
+            payload = {
+                "_csrf_token": token,
+                "_username": user.email,
+                "_password": user.password,
+                "_remember_me": 'on',
+            }
+            action_url = urljoin(config['login_url'],
+                                 html.find("form").attrs["action"])
+            sess.post(action_url, data=payload)
+            rmc_cookie = next(x for x in sess.cookies if x.name == 'REMEMBERME')
+            user.rmc_value = rmc_cookie.value
+            user.rmc_expiry = dt.datetime.fromtimestamp(rmc_cookie.expires)
+            with db.cursor() as cur:
+                cur.execute(
+                    "update user set rmc_value = %s, rmc_expiry = %s "
+                    "where id = %s",
+                    (user.rmc_value, user.rmc_expiry, user.id))
+                db.commit()
+        else:
+            # use the existing "remember me cookie" from the db
+            # this is faster and more secure as it doesn't rely on pw which we shouldn't have
+            optional_args = {
+                'domain': config['domain'],
+                'path': '/',
+                'secure': True,
+                'expires': user.rmc_expiry.timestamp(),
+                'rest': {'HttpOnly': True}
+            }
+            rmc_cookie = requests.cookies.create_cookie(
+                'REMEMBERME', user.rmc_value, **optional_args)
+            sess.cookies.set_cookie(rmc_cookie)
+
+        r = sess.get(config['dashboard_url'])
+        soup = BeautifulSoup(r.content, "html.parser")
+        return soup.find("div", id="rooms").find("table").find('tbody').find_all('tr')
 
 
 def parse_row(row):
@@ -216,6 +241,8 @@ def format_delta_pos(dfpos: int | None, suffix: str):
 def draw_room_line(rows: np.array, user: User,
                    type: str, description: str):
     """Draw line and trend line for one one room."""
+    # lazy import, because slow
+    import matplotlib.pyplot as plt
     dates, positions = rows[:, 0], rows[:, 1].astype('int')
     min_date, max_date = dates[0], dates[-1]
 
@@ -237,6 +264,11 @@ def draw_room_line(rows: np.array, user: User,
 
 
 def decorate_graph(user: User, legend_order, min_date, max_date, axes):
+    """Factor out style and formatting steps for readability."""
+    # lazy import, because slow
+    import matplotlib.pyplot as plt
+    import matplotlib
+    import pandas
     """Decorate Graph with titles, legend and ticks."""
     # sort legend by final queue pos at goal date
     order = sorted(legend_order, key=lambda x: x.fpos, reverse=True)
@@ -270,6 +302,7 @@ def decorate_graph(user: User, legend_order, min_date, max_date, axes):
 
 def draw_graph(db, date: dt.date, user: User, show):
     """Plot graph with projected trendlines."""
+    import matplotlib.pyplot as plt
     _, ax = plt.subplots(figsize=(12, 8))
     LegendItem = namedtuple('LegendItem', ['fpos', 'idx'])
     order = []
@@ -303,7 +336,7 @@ def draw_graph(db, date: dt.date, user: User, show):
 
 def scrape_queue_positions(db, date: dt.date, user: User):
     """Scrape new queue positions off site for todays date."""
-    rows = login_and_get_rows(user)
+    rows = login_and_get_rows(db, user)
     for row in rows:
         rec = parse_row(row)
         rec.date = date
@@ -325,7 +358,7 @@ def main():
 
     db = get_db()
     with db.cursor() as cur:
-        cur.execute("select id, email, password, "
+        cur.execute("select id, email, password, rmc_value, rmc_expiry,"
                     "firstname, lastname, goal_date "
                     "from user")
 
