@@ -160,11 +160,21 @@ def get_or_create_room_id(db, rec: RoomRecord, user: User):
 def create_entry(db, rec: RoomRecord):
     """Create a new entry for a room, storing new queue position."""
     with db.cursor() as cursor:
-        cursor.execute(
-            "insert into entry (date, room_id, capacity, pos) \
-            values (%s, %s, %s, %s)",
-            (rec.date, rec.room_id, rec.capacity, rec.pos)
-        )
+        try:
+            cursor.execute(
+                "insert into entry (date, room_id, capacity, pos) \
+                values (%s, %s, %s, %s)",
+                (rec.date, rec.room_id, rec.capacity, rec.pos)
+            )
+        except sql.IntegrityError as e:
+            if e.args[0] == 1062:
+                # warn and ignore
+                print('Scraped duplicate data for ' +
+                      abbrev_room(rec.typestr, rec.description) +
+                      ' on ' + rec.date.strftime('%d/%m/%Y') + '. Ignoring it', file=sys.stderr)
+            else:
+                raise e
+
         db.commit()
 
 
