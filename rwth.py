@@ -63,7 +63,7 @@ def login_and_get_rows(db, user: User):
     """Login to RWTH site and retrieve room queue table page."""
     with requests.session() as sess:
         if user.rmc_value is None or user.rmc_expiry <= dt.datetime.now():
-            # we don't have a "remember me cookie" so must login from scatch
+            # we don't have a valid "remember me cookie" so must login from scatch
             req = sess.get(config['login_url']).text
             html = BeautifulSoup(req, "html.parser")
 
@@ -78,7 +78,7 @@ def login_and_get_rows(db, user: User):
             action_url = urljoin(config['login_url'],
                                  html.find("form").attrs["action"])
             sess.post(action_url, data=payload)
-            rmc_cookie = next(x for x in sess.cookies if x.name == 'REMEMBERME')
+            rmc_cookie = next(c for c in sess.cookies if c.name == 'REMEMBERME')
             user.rmc_value = rmc_cookie.value
             user.rmc_expiry = dt.datetime.fromtimestamp(rmc_cookie.expires)
             with db.cursor() as cur:
@@ -227,7 +227,7 @@ def compute_regression(dates, positions, max_date, goal_date):
 
 
 def format_delta_pos(dfpos: int | None, suffix: str):
-    """Format a delat pos value with definitive `+` or `-`."""
+    """Format a delta pos value with definitive `+` or `-`."""
     if dfpos is None:
         s = '?'
     elif dfpos == 0:
