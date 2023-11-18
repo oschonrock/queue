@@ -157,25 +157,45 @@ def get_or_create_room_id(db, rec: RoomRecord, user: User):
         db.commit()  # commit even the select to close the "repeatable read TX"
 
 
-def create_entry(db, rec: RoomRecord):
+def create_entry(db, rec: RoomRecord, user: User, update: bool):
     """Create a new entry for a room, storing new queue position."""
-    with db.cursor() as cursor:
-        try:
-            cursor.execute(
-                "insert into entry (date, room_id, capacity, pos) \
-                values (%s, %s, %s, %s)",
+    with db.cursor() as cur:
+        cur.execute("set session transaction isolation level serializable")
+
+        cur.execute(
+            "select capacity, pos from entry "
+            "where room_id = %s and date = %s for update",
+            (rec.room_id, rec.date))
+
+        existing_row = cur.fetchone()  # has unique index
+        if existing_row is None:
+            cur.execute(
+                "insert into entry (date, room_id, capacity, pos) "
+                "values (%s, %s, %s, %s)",
                 (rec.date, rec.room_id, rec.capacity, rec.pos)
             )
-        except sql.IntegrityError as e:
-            if e.args[0] == 1062:
-                # warn and ignore
-                print('Scraped duplicate data for ' +
-                      abbrev_room(rec.typestr, rec.description) +
-                      ' on ' + rec.date.strftime('%d/%m/%Y') + '. Ignoring it', file=sys.stderr)
+        else:
+            print('Found exsisting data for user ' + user.email +
+                  ' and room_id=' + str(rec.room_id) + ', date=' +
+                  rec.date.strftime('%d/%m/%Y') + '. ', file=sys.stderr, end="")
+            existing_capacity, existing_pos = existing_row
+            if existing_capacity != rec.capacity or existing_pos != rec.pos:
+                print('Capacity and/or pos differed. ', file=sys.stderr, end="")
+                if update:
+                    print('Updated them.', file=sys.stderr)
+                    cur.execute(
+                        "update entry set capacity = %s, pos = %s "
+                        "where room_id = %s and date = %s",
+                        (rec.capacity, rec.pos, rec.room_id, rec.date)
+                    )
+                else:
+                    print('Ignored. Use --update to update. ', file=sys.stderr, end="")
             else:
-                raise e
+                print('New data was identical. ', file=sys.stderr, end="")
+            print(file=sys.stderr)
 
         db.commit()
+        cur.execute("set session transaction isolation level repeatable read")
 
 
 def abbrev_room(type, description):
@@ -344,14 +364,14 @@ def draw_graph(db, date: dt.date, user: User, show):
         print(filename)  # provide filename for calling program in shell
 
 
-def scrape_queue_positions(db, date: dt.date, user: User):
+def scrape_queue_positions(db, date: dt.date, user: User, update: bool):
     """Scrape new queue positions off site for todays date."""
     rows = login_and_get_rows(db, user)
     for row in rows:
         rec = parse_row(row)
         rec.date = date
         get_or_create_room_id(db, rec, user)
-        create_entry(db, rec)
+        create_entry(db, rec, user, update)
 
 
 def main():
@@ -362,6 +382,8 @@ def main():
         'Or report in graph form.',
         epilog='Hope you get a nice place to live.')
 
+    parser.add_argument('-u', '--update', action='store_true')
+    
     parser.add_argument('-g', '--graph', action='store_true')
     parser.add_argument('-s', '--show', action='store_true')
     args = parser.parse_args()
@@ -381,7 +403,7 @@ def main():
         if args.graph:
             draw_graph(db, date, user, args.show)
         else:
-            scrape_queue_positions(db, date, user)
+            scrape_queue_positions(db, date, user, args.update)
 
 
 if __name__ == '__main__':
