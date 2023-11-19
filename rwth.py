@@ -330,7 +330,7 @@ def decorate_graph(user: User, legend_order, min_date, max_date, axes):
     plt.tight_layout()
 
 
-def draw_graph(db, date: dt.date, user: User, show):
+def draw_graph(db, date: dt.date, user: User, display):
     """Plot graph with projected trendlines."""
     import matplotlib.pyplot as plt
     _, ax = plt.subplots(figsize=(12, 8))
@@ -356,7 +356,7 @@ def draw_graph(db, date: dt.date, user: User, show):
 
         decorate_graph(user, order, overall_min_date, overall_max_date, ax)
 
-    if (show):
+    if (display):
         plt.show()
     else:
         filename = dirname + '/' + overall_max_date.strftime('%Y-%m-%d') + '_' + user.email + '.png'
@@ -380,13 +380,22 @@ def main():
         prog='rwth.py',
         description='Scrape date off Student accom website and store in db. '
         'Or report in graph form.',
-        epilog='Hope you get a nice place to live.')
+        epilog='Hope you find a nice place to live.')
 
-    parser.add_argument('-u', '--update', action='store_true')
-    
-    parser.add_argument('-g', '--graph', action='store_true')
-    parser.add_argument('-s', '--show', action='store_true')
+    parser.add_argument('-s', '--scrape', action='store_true',
+                        help='scrape new data. deafult=true')
+    parser.add_argument('-u', '--update', action='store_true',
+                        help='update duplicate data')
+
+    parser.add_argument('-g', '--graph', action='store_true',
+                        help='generate graph. print filename to stdout')
+    parser.add_argument('-d', '--display', action='store_true',
+                        help='show graph rather than save to file')
     args = parser.parse_args()
+
+    if not args.scrape and not args.graph:
+        print("No action specificed. Specify one or more of [ --scrape | --graph ]. Exiting.")
+        exit(0)
 
     db = get_db()
     with db.cursor() as cur:
@@ -400,10 +409,10 @@ def main():
     date = dt.date.today()
     for row in user_rows:
         user = User(*row)
-        if args.graph:
-            draw_graph(db, date, user, args.show)
-        else:
+        if args.scrape:
             scrape_queue_positions(db, date, user, args.update)
+        if args.graph:
+            draw_graph(db, date, user, args.display)
 
 
 if __name__ == '__main__':
