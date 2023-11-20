@@ -175,12 +175,15 @@ def create_entry(db, rec: RoomRecord, user: User, update: bool):
                 (rec.date, rec.room_id, rec.capacity, rec.pos)
             )
         else:
-            print('Found exsisting data for user ' + user.email +
-                  ' and room_id=' + str(rec.room_id) + ', date=' +
-                  rec.date.strftime('%d/%m/%Y') + '. ', file=sys.stderr, end="")
+            print(f"Found exsisting data for {user.email} "
+                  f"{abbrev_room(rec.typestr, rec.description)}, "
+                  f"{rec.date.strftime('%d/%m/%Y')} ", file=sys.stderr, end="")
             existing_capacity, existing_pos = existing_row
             if existing_capacity != rec.capacity or existing_pos != rec.pos:
-                print('Capacity and/or pos differed. ', file=sys.stderr, end="")
+                if existing_capacity != rec.capacity:
+                    print(f"capacity: {existing_capacity}=>{rec.capacity} ")
+                if existing_pos != rec.pos:
+                    print(f"pos: {existing_pos}=>{rec.pos} ", file=sys.stderr, end="")
                 if update:
                     print('Updated them.', file=sys.stderr)
                     cur.execute(
