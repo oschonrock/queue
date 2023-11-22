@@ -154,7 +154,7 @@ def get_or_create_room_id(db, rec: RoomRecord, user: User):
                 (user.id, rec.ext_room_id, rec.typestr, rec.description))
             rec.room_id = cur.lastrowid
 
-        db.commit()  # commit even the select to close the "repeatable read TX"
+        db.commit()
 
 
 def create_or_update_entry(db, rec: RoomRecord, user: User, update: bool):
@@ -357,7 +357,7 @@ def draw_graph(db, date: dt.date, user: User, display):
                     (user.id,))
 
         overall_min_date, overall_max_date = cur.fetchone()
-        db.commit()  # commit the selects to close the "repeatable read TX"
+        db.commit()
 
         decorate_graph(user, order, overall_min_date, overall_max_date, ax)
 
@@ -409,7 +409,7 @@ def main():
                     "from user")
 
         users = [User(*row) for row in cur]
-        db.commit()  # commit the select to close the "repeatable read TX"
+        db.commit()
 
     date = dt.date.today()
     for user in users:
