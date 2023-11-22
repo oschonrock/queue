@@ -62,6 +62,8 @@ class Regression:
 def login_and_get_rows(db, user: User):
     """Login to RWTH site and retrieve room queue table page."""
     with requests.session() as sess:
+        sess.headers.update({'User-Agent': 'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:120.0) '
+                             'Gecko/20100101 Firefox/120.0'})
         if user.rmc_value is None or user.rmc_expiry <= dt.datetime.now():
             # we don't have a valid "remember me cookie" so must login from scatch
             req = sess.get(config['login_url']).text
