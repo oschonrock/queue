@@ -157,7 +157,7 @@ def get_or_create_room_id(db, rec: RoomRecord, user: User):
         db.commit()  # commit even the select to close the "repeatable read TX"
 
 
-def create_entry(db, rec: RoomRecord, user: User, update: bool):
+def create_or_update_entry(db, rec: RoomRecord, user: User, update: bool):
     """Create a new entry for a room, storing new queue position."""
     with db.cursor() as cur:
         cur.execute("set session transaction isolation level serializable")
@@ -175,26 +175,26 @@ def create_entry(db, rec: RoomRecord, user: User, update: bool):
                 (rec.date, rec.room_id, rec.capacity, rec.pos)
             )
         else:
-            print(f"Found exsisting data for {user.email} "
+            print(f"Found exsisting data for {user.email}, "
                   f"{abbrev_room(rec.typestr, rec.description)}, "
-                  f"{rec.date.strftime('%d/%m/%Y')} ", file=sys.stderr, end="")
+                  f"{rec.date.strftime('%d/%m/%Y')}: ", file=sys.stderr, end="")
             existing_capacity, existing_pos = existing_row
             if existing_capacity != rec.capacity or existing_pos != rec.pos:
                 if existing_capacity != rec.capacity:
-                    print(f"capacity: {existing_capacity}=>{rec.capacity} ")
+                    print(f"capacity: {existing_capacity}->{rec.capacity} ")
                 if existing_pos != rec.pos:
-                    print(f"pos: {existing_pos}=>{rec.pos} ", file=sys.stderr, end="")
+                    print(f"pos: {existing_pos}->{rec.pos} ", file=sys.stderr, end="")
                 if update:
-                    print('Updated them.', file=sys.stderr)
+                    print('Updated.', file=sys.stderr)
                     cur.execute(
                         "update entry set capacity = %s, pos = %s "
                         "where room_id = %s and date = %s",
                         (rec.capacity, rec.pos, rec.room_id, rec.date)
                     )
                 else:
-                    print('Ignored. Use --update to update. ', file=sys.stderr, end="")
+                    print('Ignored, suggest --update. ', file=sys.stderr, end="")
             else:
-                print('New data was identical. ', file=sys.stderr, end="")
+                print('Identical. ', file=sys.stderr, end="")
             print(file=sys.stderr)
 
         db.commit()
@@ -342,6 +342,7 @@ def draw_graph(db, date: dt.date, user: User, display):
     with db.cursor() as cur:
         cur.execute("select id, type, description from room "
                     "where user_id = %s order by id", (user.id,))
+
         for idx, (room_id, type, description) in enumerate(cur.fetchall()):
             cur.execute("select date, pos "
                         "from entry where room_id = %s order by date",
@@ -354,6 +355,7 @@ def draw_graph(db, date: dt.date, user: User, display):
                     "from entry e join room r on e.room_id = r.id "
                     "where r.user_id = %s",
                     (user.id,))
+
         overall_min_date, overall_max_date = cur.fetchone()
         db.commit()  # commit the selects to close the "repeatable read TX"
 
@@ -374,7 +376,7 @@ def scrape_queue_positions(db, date: dt.date, user: User, update: bool):
         rec = parse_row(row)
         rec.date = date
         get_or_create_room_id(db, rec, user)
-        create_entry(db, rec, user, update)
+        create_or_update_entry(db, rec, user, update)
 
 
 def main():
@@ -406,12 +408,11 @@ def main():
                     "firstname, lastname, goal_date "
                     "from user")
 
-        user_rows = cur.fetchall()
+        users = [User(*row) for row in cur]
         db.commit()  # commit the select to close the "repeatable read TX"
 
     date = dt.date.today()
-    for row in user_rows:
-        user = User(*row)
+    for user in users:
         if args.scrape:
             scrape_queue_positions(db, date, user, args.update)
         if args.graph:
