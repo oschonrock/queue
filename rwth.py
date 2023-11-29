@@ -239,10 +239,28 @@ def regress(dates, positions, max_date, goal_date, delta_days=0):
         return None, None, None
 
     min_date = dates[0]
-    dates_ltd = dates[:bis]
-    positions_ltd = positions[:bis]
-    m, c = np.polyfit(dates_to_ints(min_date, dates_ltd),
-                      positions_ltd, deg=1) if len(dates_ltd) > 1 else (0, positions_ltd[0])
+    dates_ltd = np.copy(dates)[:bis]
+    positions_ltd = np.copy(positions)[:bis]
+
+    # correct for large downwards step on Nov25. In future detect these automatically
+    bis_step = bisect.bisect_left(dates_ltd, dt.date(2023, 11, 25))
+    step = 0
+    if (bis_step != 0 and bis_step < len(dates_ltd) - 1):
+        step = positions_ltd[bis_step + 1] - positions_ltd[bis_step]
+        positions_ltd[bis_step + 1:] -= step
+
+    fitdata = \
+        np.polyfit(dates_to_ints(min_date, dates_ltd),
+                   positions_ltd, deg=1, full=True) if len(dates_ltd) > 1 else \
+        ([0, positions_ltd[0]], [0], 0, [0, 0], 0)
+
+    polycoeffs, residuals, rank, singular_vs, rcond = fitdata
+    m, c = polycoeffs
+    # do sth with residuals to detect steps
+    # print("stddev=", np.sqrt(residuals[0] / (len(dates_ltd) - rank)))
+
+    # ignore step
+    c += step
 
     # project to goal_date
     fpos = int(round(m * int((goal_date - min_date).days) + c))
