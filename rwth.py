@@ -54,9 +54,9 @@ class Regression:
 
     m: float
     c: float
-    fpos: int
-    dfpos_1d: int
-    dfpos_1w: int
+    eta: dt.date
+    deta_1d: int
+    deta_1w: int
 
 
 def login_and_get_rows(db, user: User):
@@ -249,34 +249,36 @@ def regress(dates, positions, max_date, goal_date, delta_days=0):
         step = positions_ltd[bis_step + 1] - positions_ltd[bis_step]
         positions_ltd[bis_step + 1:] -= step
 
-    fitdata = \
-        np.polyfit(dates_to_ints(min_date, dates_ltd),
-                   positions_ltd, deg=1, full=True) if len(dates_ltd) > 1 else \
-        ([0, positions_ltd[0]], [0], 0, [0, 0], 0)
+    if len(dates_ltd) > 1:
+        fitdata = np.polyfit(dates_to_ints(min_date, dates_ltd),
+                             positions_ltd, deg=1, full=True)
+    else:
+        fitdata = ([0, positions_ltd[0]], [0], 0, [0, 0], 0)
 
     polycoeffs, residuals, rank, singular_vs, rcond = fitdata
     m, c = polycoeffs
-    # do sth with residuals to detect steps
+    # TODO: use residuals to detect steps, by looking 5 * stddev or similar
     # print("stddev=", np.sqrt(residuals[0] / (len(dates_ltd) - rank)))
 
-    # ignore step
+    # reattach linear regression to the points after the step
     c += step
 
+    # not using final position any more
+    # fpos = int(round(m * int((goal_date - min_date).days) + c))
     # project to goal_date
-    fpos = int(round(m * int((goal_date - min_date).days) + c))
-
-    return m, c, fpos
+    eta = min_date + dt.timedelta(days=int(round(-c / m))) if abs(m) > 1e-8 else None
+    return m, c, eta
 
 
 def compute_regression(dates, positions, max_date, goal_date):
     """Compute regression line by converting to int days since min_date."""
-    m, c, fpos = regress(dates, positions, max_date, goal_date)
-    _, _, fpos_1d = regress(dates, positions, max_date, goal_date, delta_days=1)
-    _, _, fpos_1w = regress(dates, positions, max_date, goal_date, delta_days=7)
-    dfpos_1d = fpos - fpos_1d if fpos_1d is not None else None
-    dfpos_1w = fpos - fpos_1w if fpos_1w is not None else None
+    m, c, eta = regress(dates, positions, max_date, goal_date)
+    _, _, eta_1d = regress(dates, positions, max_date, goal_date, delta_days=1)
+    _, _, eta_1w = regress(dates, positions, max_date, goal_date, delta_days=7)
+    deta_1d = int((eta - eta_1d).days) if eta is not None and eta_1d is not None else None
+    deta_1w = int((eta - eta_1w).days) if eta is not None and eta_1w is not None else None
 
-    return Regression(m, c, fpos, dfpos_1d, dfpos_1w)
+    return Regression(m, c, eta, deta_1d, deta_1w)
 
 
 def format_delta_pos(dfpos: int | None, suffix: str):
@@ -303,9 +305,9 @@ def draw_room_line(rows: np.array, user: User,
 
     # plot historic data and the regression line
     label = abbrev_room(type, description) +\
-        ' | ' + str(rl.fpos).rjust(3) +\
-        format_delta_pos(rl.dfpos_1d, "d") +\
-        format_delta_pos(rl.dfpos_1w, "w")
+        ' | ' + (rl.eta.strftime('%d.%m.%Y') if rl.eta is not None else "          ") +\
+        format_delta_pos(rl.deta_1d, "d") +\
+        format_delta_pos(rl.deta_1w, "w")
 
     line, = plt.plot(dates, positions, label=label)
 
@@ -313,7 +315,7 @@ def draw_room_line(rows: np.array, user: User,
     trend_days = dates_to_ints(min_date, trend_dates)
 
     plt.plot(trend_dates, rl.m * trend_days + rl.c, line.get_color(), linestyle=':')
-    return rl.fpos
+    return rl.eta
 
 
 def decorate_graph(user: User, legend_order, min_date, max_date, axes):
@@ -324,7 +326,8 @@ def decorate_graph(user: User, legend_order, min_date, max_date, axes):
     import pandas
     """Decorate Graph with titles, legend and ticks."""
     # sort legend by final queue pos at goal date
-    order = sorted(legend_order, key=lambda x: x.fpos, reverse=True)
+    order = sorted(legend_order,
+                   key=lambda x: x.eta if x.eta is not None else dt.date(2199, 1, 1), reverse=True)
     handles, labels = plt.gca().get_legend_handles_labels()
     plt.legend([handles[e.idx] for e in order], [labels[e.idx] for e in order],
                loc="upper right", prop={'family': 'monospace'}, framealpha=1)
@@ -357,7 +360,7 @@ def draw_graph(db, date: dt.date, user: User, display):
     """Plot graph with projected trendlines."""
     import matplotlib.pyplot as plt
     _, ax = plt.subplots(figsize=(12, 8))
-    LegendItem = namedtuple('LegendItem', ['fpos', 'idx'])
+    LegendItem = namedtuple('LegendItem', ['eta', 'idx'])
     order = []
     with db.cursor() as cur:
         cur.execute("select id, type, description from room "
@@ -368,8 +371,8 @@ def draw_graph(db, date: dt.date, user: User, display):
                         "from entry where room_id = %s order by date",
                         (room_id,))
 
-            fpos = draw_room_line(np.array(cur.fetchall()), user, type, description)
-            order.append(LegendItem(fpos, idx))
+            eta = draw_room_line(np.array(cur.fetchall()), user, type, description)
+            order.append(LegendItem(eta, idx))
 
         cur.execute("select min(e.date) as min, max(e.date) as max "
                     "from entry e join room r on e.room_id = r.id "
